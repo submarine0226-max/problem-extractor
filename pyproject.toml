@@ -1,0 +1,33 @@
+[project]
+name = "problem-extractor"
+version = "0.1.0"
+description = "수학 교과서·문제집 사진에서 문제를 추출해 DB에 저장하는 API"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.10"
+dependencies = [
+    "google-genai>=3.0",
+    "fastapi>=0.162",  # CORS allow_private_network 지원 Starlette 포함
+    "uvicorn[standard]>=0.30",
+    "python-multipart>=0.0.9",
+    "pillow>=10.0",
+    "pydantic>=2.7",
+]
+
+[project.optional-dependencies]
+claude = ["anthropic>=2.7"]
+dev = ["anthropic>=2.7", "pytest>=8", "httpx>=0.27"]
+
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["problem_extractor", "problem_extractor.extractors"]
+
+[tool.setuptools.package-data]
+problem_extractor = ["web/*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]

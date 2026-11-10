@@ -1,0 +1,146 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>문제 추출기</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css">
+  <link rel="stylesheet" href="/static/style.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"></script>
+  <script defer src="/static/app.js"></script>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">문제 추출기</div>
+    <nav class="tabs" aria-label="화면">
+      <a href="#upload" data-tab="upload">올리기</a>
+      <a href="#problems" data-tab="problems">문제 <span id="badge-unreviewed" class="badge" hidden></span></a>
+      <a href="#pages" data-tab="pages">페이지</a>
+    </nav>
+    <div id="health" class="muted small"></div>
+  </header>
+
+  <main>
+    <!-- 올리기 -->
+    <section id="view-upload" class="view" hidden>
+      <label id="dropzone" class="dropzone" tabindex="0">
+        <input id="file-input" type="file" accept="image/jpeg,image/png,image/webp" multiple hidden>
+        <strong>페이지 사진을 끌어다 놓거나 클릭해서 고르세요</strong>
+        <span class="muted">여러 장 가능 · JPEG / PNG / WEBP · 화면 캡처는 Ctrl+V로 붙여넣기</span>
+      </label>
+      <div class="row gap">
+        <label class="check"><input id="force" type="checkbox"> 이미 처리한 사진도 다시 추출</label>
+        <span class="spacer"></span>
+        <button id="clear-done" class="ghost" type="button">완료 항목 지우기</button>
+      </div>
+      <ul id="queue" class="queue"></ul>
+    </section>
+
+    <!-- 문제 -->
+    <section id="view-problems" class="view" hidden>
+      <form id="filters" class="filters">
+        <input name="q" type="search" placeholder="발문·보기 검색">
+        <input name="tag" placeholder="태그 (예: 이차방정식)">
+        <input name="topic" placeholder="단원">
+        <select name="problem_type">
+          <option value="">모든 유형</option>
+          <option value="multiple_choice">객관식</option>
+          <option value="short_answer">단답형</option>
+          <option value="essay">서술형</option>
+          <option value="true_false">OX</option>
+          <option value="other">기타</option>
+        </select>
+        <select name="reviewed">
+          <option value="">검수 전체</option>
+          <option value="false">검수 전</option>
+          <option value="true">검수 완료</option>
+        </select>
+        <button type="submit">검색</button>
+        <button id="reset-filters" type="button" class="ghost">초기화</button>
+      </form>
+      <div class="row gap list-head">
+        <span id="source-chip" class="chip" hidden></span>
+        <span id="problem-count" class="muted"></span>
+        <span class="spacer"></span>
+        <button id="export" type="button" class="ghost">JSON 내보내기</button>
+      </div>
+      <div id="problem-list" class="cards"></div>
+      <div class="pager">
+        <button id="prev-page" type="button" class="ghost">이전</button>
+        <span id="page-info" class="muted"></span>
+        <button id="next-page" type="button" class="ghost">다음</button>
+      </div>
+    </section>
+
+    <!-- 페이지 -->
+    <section id="view-pages" class="view" hidden>
+      <div id="page-list" class="pages-grid"></div>
+    </section>
+  </main>
+
+  <!-- 검수·수정 -->
+  <dialog id="editor" class="editor">
+    <form id="edit-form" method="dialog">
+      <header class="editor-head">
+        <strong id="edit-title">문제</strong>
+        <span id="edit-meta" class="muted small"></span>
+        <span class="spacer"></span>
+        <button type="button" class="ghost" data-close>닫기 (Esc)</button>
+      </header>
+      <div class="editor-body">
+        <div class="editor-original">
+          <div class="row gap small">
+            <span class="muted">원본</span>
+            <span class="spacer"></span>
+            <a id="open-page" target="_blank" rel="noopener">페이지 전체 보기</a>
+          </div>
+          <img id="edit-image" alt="원본에서 잘라낸 문제 영역">
+          <div id="edit-figures" class="figures"></div>
+        </div>
+        <div class="editor-fields">
+          <div class="grid3">
+            <label>번호<input name="number"></label>
+            <label>유형
+              <select name="problem_type">
+                <option value="multiple_choice">객관식</option>
+                <option value="short_answer">단답형</option>
+                <option value="essay">서술형</option>
+                <option value="true_false">OX</option>
+                <option value="other">기타</option>
+              </select>
+            </label>
+            <label>배점<input name="points" inputmode="decimal"></label>
+          </div>
+          <div class="grid2">
+            <label>단원<input name="topic"></label>
+            <label>태그<input name="tags" placeholder="쉼표로 구분: 이차방정식, 판별식"></label>
+          </div>
+          <label>공통 지문<textarea name="shared_context" rows="2"></textarea></label>
+          <label><span class="label-row">발문 <span class="hint small">수식은 $...$ / $$...$$</span></span><textarea name="stem" rows="4" required></textarea></label>
+          <div class="choices-block">
+            <div class="row gap"><span>보기</span><span class="spacer"></span><button id="add-choice" type="button" class="ghost small">+ 보기 추가</button></div>
+            <div id="choice-rows"></div>
+          </div>
+          <div class="grid2">
+            <label>정답<input name="answer"></label>
+            <label>메모<input name="notes"></label>
+          </div>
+          <label>해설<textarea name="solution" rows="2"></textarea></label>
+          <div class="preview-label muted small">미리보기</div>
+          <div id="preview" class="preview problem-body"></div>
+        </div>
+      </div>
+      <footer class="editor-foot">
+        <button id="delete-problem" type="button" class="danger ghost">삭제</button>
+        <span id="edit-status" class="muted small"></span>
+        <span class="spacer"></span>
+        <button id="save" type="button" class="ghost">저장</button>
+        <button id="save-next" type="button">검수 완료 · 다음 <kbd>Ctrl+Enter</kbd></button>
+      </footer>
+    </form>
+  </dialog>
+
+  <div id="toast" class="toast" role="status" hidden></div>
+</body>
+</html>
