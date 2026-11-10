@@ -197,9 +197,23 @@ def test_rate_limit_returns_429(settings):
     assert upload(client, png_bytes()).status_code == 429
 
 
-def test_missing_gemini_key_returns_503(settings, monkeypatch):
-    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
-    monkeypatch.delenv("GOOGLE_API_KEY", raising=False)
+@pytest.fixture
+def no_keys(monkeypatch, tmp_path):
+    """실제 .env나 시스템 키에 영향받지 않게: 빈 폴더에서, 키 없이."""
+    import os
+
+    from problem_extractor import config
+
+    monkeypatch.chdir(tmp_path)
+    for k in ("GEMINI_API_KEY", "GOOGLE_API_KEY", "ANTHROPIC_API_KEY"):
+        monkeypatch.delenv(k, raising=False)
+    yield tmp_path
+    for k in list(config._FROM_DOTENV):
+        os.environ.pop(k, None)
+    config._FROM_DOTENV.clear()
+
+
+def test_missing_gemini_key_returns_503(settings, no_keys):
     from dataclasses import replace
 
     client = TestClient(create_app(replace(settings, provider="gemini")))
@@ -265,3 +279,25 @@ def test_standalone_build_inlines_assets():
     assert "/static/" not in html
     assert "window.PX_STANDALONE = true" in html
     assert html.index("PX_STANDALONE = true") < html.index("function start()") < html.index("</body>")
+
+
+def test_health_reports_key_and_picks_up_env_without_restart(settings, no_keys):
+    from dataclasses import replace
+
+    client = TestClient(create_app(replace(settings, provider="gemini")))
+    body = client.get("/health").json()
+    assert body["ready"] is False
+    assert body["model"] == "gemini-3.5-flash-lite"
+
+    (no_keys / ".env").write_text("GEMINI_API_KEY=", encoding="utf-8")
+    assert client.get("/health").json()["ready"] is False  # 빈 값은 없는 것으로
+
+    (no_keys / ".env").write_text("GEMINI_API_KEY=test-key-not-real", encoding="utf-8")
+    assert client.get("/health").json()["ready"] is True  # 서버를 다시 켜지 않아도 반영
+
+
+def test_default_models_match_extractor_modules():
+    from problem_extractor.extractors import DEFAULT_MODELS
+    from problem_extractor.extractors import claude, gemini
+
+    assert DEFAULT_MODELS == {"gemini": gemini.DEFAULT_MODEL, "claude": claude.DEFAULT_MODEL}

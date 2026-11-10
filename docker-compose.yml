@@ -1,0 +1,17 @@
+# 실행: docker compose up -d   →  http://localhost:8000
+# 먼저 .env.example 을 .env 로 복사하고 GEMINI_API_KEY 를 넣어 주세요.
+services:
+  problem-extractor:
+    build: .
+    image: problem-extractor
+    env_file:
+      - path: .env
+        required: false
+    ports:
+      # 내 컴퓨터에서만 열리게 127.0.0.1 에만 묶는다 (인증이 없어서)
+      - "127.0.0.1:8000:8000"
+    environment:
+      PX_DATA_DIR: /data  # .env 의 값보다 우선
+    volumes:
+      - ./data:/data
+    restart: unless-stopped

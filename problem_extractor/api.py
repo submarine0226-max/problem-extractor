@@ -12,15 +12,17 @@ from fastapi.staticfiles import StaticFiles
 from starlette.concurrency import run_in_threadpool
 
 from . import __version__
-from .config import Settings, load_settings
+from .config import Settings, load_settings, refresh_env
 from .db import Database
 from .extractors import (
     ExtractionError,
+    DEFAULT_MODELS,
     Extractor,
     MissingCredentialsError,
     RateLimitedError,
     UpstreamError,
     build_extractor,
+    has_credentials,
 )
 from .images import InvalidImageError
 from .schemas import ExtractResponse, ProblemList, ProblemOut, ProblemPatch, ProblemType, SourceOut
@@ -60,6 +62,7 @@ def create_app(settings: Settings | None = None, extractor: Extractor | None = N
         # 모델 클라이언트는 첫 추출 요청 때 만든다. 키 없이도 조회 API는 쓸 수 있게.
         svc = get_service()
         if svc.extractor is None:
+            refresh_env()  # 서버를 켠 뒤에 .env에 키를 넣었어도 다시 켜지 않고 쓸 수 있게
             try:
                 svc.extractor = build_extractor(settings.provider, settings.model, settings.effort)
             except MissingCredentialsError as exc:
@@ -69,8 +72,17 @@ def create_app(settings: Settings | None = None, extractor: Extractor | None = N
     Svc = Annotated[ProblemService, Depends(get_service)]
 
     @app.get("/health")
-    def health() -> dict[str, str | None]:
-        return {"status": "ok", "version": __version__, "provider": settings.provider, "model": settings.model}
+    def health() -> dict:
+        svc = get_service()
+        if svc.extractor is not None:
+            ready: bool | None = True
+            model = svc.extractor.model_name
+        else:
+            refresh_env()
+            ready = has_credentials(settings.provider)
+            model = settings.model or DEFAULT_MODELS.get(settings.provider)
+        # ready: 추출에 필요한 API 키가 있는지 (None이면 서버가 알 수 없음)
+        return {"status": "ok", "version": __version__, "provider": settings.provider, "model": model, "ready": ready}
 
     @app.post("/extract", response_model=ExtractResponse, summary="사진 한 장에서 문제 추출 후 저장")
     async def extract(
@@ -93,6 +105,7 @@ def create_app(settings: Settings | None = None, extractor: Extractor | None = N
         except ExtractionError as exc:
             raise HTTPException(422, str(exc)) from exc
         except MissingCredentialsError as exc:
+            svc.extractor = None  # 키를 고친 뒤 다시 만들 수 있게
             raise HTTPException(503, f"{exc} .env를 확인해 주세요.") from exc
         except RateLimitedError as exc:
             raise HTTPException(429, f"{exc} 잠시 후 다시 시도해 주세요.") from exc

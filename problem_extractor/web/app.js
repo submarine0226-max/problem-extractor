@@ -125,6 +125,28 @@ function changeServer() {
   showView();
 }
 
+/** API 키가 없으면 받는 방법을 화면 맨 위에 안내한다. */
+function renderSetupBanner(health) {
+  const banner = $("#setup-banner");
+  banner.hidden = health.ready !== false;
+  if (banner.hidden) return;
+  const isGemini = health.provider === "gemini";
+  banner.replaceChildren(
+    h("strong", {}, isGemini ? "사진에서 문제를 뽑으려면 Gemini API 키가 필요해요 (무료)" : "API 키가 설정되지 않았어요"),
+    isGemini
+      ? h("ol", {},
+          h("li", {}, h("a", { href: "https://aistudio.google.com/apikey", target: "_blank", rel: "noopener" }, "Google AI Studio"),
+            "에서 구글 계정으로 로그인하고 ", h("b", {}, "Create API key"), "를 눌러 키를 복사해요."),
+          h("li", {}, "프로그램 폴더의 ", h("code", {}, ".env"), " 파일을 메모장으로 열고 ",
+            h("code", {}, "GEMINI_API_KEY="), " 뒤에 붙여 넣고 저장해요."),
+          h("li", {}, "아래 버튼을 눌러요. 서버를 다시 켤 필요 없어요."))
+      : h("p", {}, ".env 파일에 사용하는 제공사의 API 키를 넣고 아래 버튼을 눌러 주세요."),
+    h("div", { class: "row gap" },
+      h("button", { type: "button", onclick: () => refreshHeader() }, "키 넣었어요, 다시 확인"),
+      h("span", { class: "muted small" }, "키가 없어도 저장된 문제 보기·검수는 할 수 있어요.")),
+  );
+}
+
 async function refreshHeader() {
   const health$ = $("#health");
   if (window.PX_STANDALONE) {
@@ -134,6 +156,7 @@ async function refreshHeader() {
   try {
     const health = await api("/health");
     health$.textContent = `${health.provider} · ${health.model ?? "기본 모델"}${window.PX_STANDALONE ? ` · ${API_BASE}` : ""}`;
+    renderSetupBanner(health);
     const pending = await api("/problems?reviewed=false&limit=1");
     const badge = $("#badge-unreviewed");
     badge.hidden = pending.total === 0;

@@ -7,8 +7,14 @@ from dataclasses import dataclass
 from pathlib import Path
 
 
+_FROM_DOTENV: set[str] = set()  # .env에서 읽어 넣은 키 (다시 읽을 때 새 값으로 바꿔도 되는 것들)
+
+
 def _load_dotenv(path: Path) -> None:
-    """의존성을 늘리지 않으려고 만든 아주 단순한 .env 로더. 이미 설정된 값은 덮어쓰지 않는다."""
+    """의존성을 늘리지 않으려고 만든 아주 단순한 .env 로더.
+
+    시스템 환경 변수로 이미 설정된 값은 덮어쓰지 않는다. 빈 값은 '설정 안 함'으로 본다.
+    """
     if not path.is_file():
         return
     for raw in path.read_text(encoding="utf-8").splitlines():
@@ -16,7 +22,17 @@ def _load_dotenv(path: Path) -> None:
         if not line or line.startswith("#") or "=" not in line:
             continue
         key, value = line.split("=", 1)
-        os.environ.setdefault(key.strip(), value.strip().strip('"').strip("'"))
+        key, value = key.strip(), value.strip().strip('"').strip("'")
+        if not value:
+            continue
+        if key not in os.environ or key in _FROM_DOTENV:
+            os.environ[key] = value
+            _FROM_DOTENV.add(key)
+
+
+def refresh_env() -> None:
+    """서버를 끄지 않고 .env를 다시 읽는다 (API 키를 나중에 넣은 경우)."""
+    _load_dotenv(Path.cwd() / ".env")
 
 
 @dataclass(frozen=True)

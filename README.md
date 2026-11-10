@@ -10,22 +10,55 @@
 
 > ⚠️ **저작권 안내** — 이 프로젝트는 도구만 제공합니다. 교과서·문제집의 문제는 대부분 출판사의 저작물이에요. 입력한 자료와 추출 결과를 어떻게 쓰고 공유할지는 **사용자 책임**이며, 각자 저작권법을 지켜 주세요. 이 저장소에는 실제 출판물의 문제가 들어 있지 않아요. 샘플 이미지는 `scripts/make_sample.py`로 직접 그린 거예요.
 
-## 빠른 시작
+## 3분 만에 시작하기
 
-Python 3.10 이상이 필요해요.
+준비물: **Python 3.10 이상** ([python.org](https://www.python.org/downloads/)에서 설치, Windows는 설치 첫 화면에서 "Add python.exe to PATH" 체크) + 구글 계정
+
+1. **내려받기**: 이 페이지 위쪽 초록색 **Code → Download ZIP**을 눌러 받고 압축을 풀어요. (git을 쓰면 `git clone https://github.com/submarine0226-max/problem-extractor`)
+2. **실행**
+   - Windows: 폴더 안의 **`start.bat`을 더블클릭**
+   - macOS·Linux: 터미널에서 `./start.sh`
+3. 처음 한 번은 필요한 것을 알아서 설치하고(1~3분), **무료 Gemini API 키**를 물어봐요. 열리는 [Google AI Studio](https://aistudio.google.com/apikey) 페이지에서 **Create API key**를 눌러 복사한 뒤 창에 붙여 넣으면 끝이에요. (카드 등록 필요 없음)
+4. 브라우저가 자동으로 열려요. 사진을 끌어다 놓으면 문제가 추출돼요.
+
+다음부터는 `start.bat`(또는 `./start.sh`)만 실행하면 바로 켜져요. 검은 창을 닫으면 서버가 꺼져요. 데이터는 폴더 안의 `data/`에 쌓여요.
+
+<details>
+<summary>Docker로 실행하기</summary>
 
 ```bash
-git clone <this repo> && cd problem-extractor
+cp .env.example .env          # GEMINI_API_KEY= 뒤에 키를 넣으세요
+docker compose up -d          # http://localhost:8000
+```
+
+데이터는 `./data`에 저장돼요. 내 컴퓨터(127.0.0.1)에서만 열리게 묶어 뒀어요.
+</details>
+
+<details>
+<summary>직접 설치하기 (개발용)</summary>
+
+```bash
 python -m venv .venv
 # Windows: .venv\Scripts\activate   /   macOS·Linux: source .venv/bin/activate
-pip install -e ".[dev]"     # Claude도 쓸 거면 ".[dev]" 그대로, Gemini만 쓰면 pip install -e . 로 충분
+pip install -e ".[dev]"     # Gemini만 쓰면 pip install -e . 로 충분
 cp .env.example .env        # GEMINI_API_KEY 를 채우세요
 uvicorn problem_extractor.main:app --reload
 ```
+</details>
 
-Gemini API 키는 https://aistudio.google.com/apikey 에서 카드 등록 없이 무료로 받을 수 있어요.
+### 자주 막히는 곳
 
-서버를 켜고 http://localhost:8000 을 열면 **웹 화면**이 나와요.
+| 증상 | 해결 |
+|---|---|
+| `start.bat`을 눌렀는데 "Python 3.10 이상이 필요해요" | Python을 설치하고(PATH 체크) 다시 실행 |
+| 화면 위에 "API 키가 필요해요" 안내 | `.env` 파일의 `GEMINI_API_KEY=` 뒤에 키를 넣고 저장 → 화면의 **다시 확인** 버튼 (서버 재시작 필요 없음) |
+| 사진을 올리면 429 오류 | 무료 한도에 걸린 거예요. 화면이 60초 뒤 자동으로 다시 시도해요 |
+| "키가 잘못됐어요" | 키를 다시 복사해서 `.env`에 넣어 주세요 (앞뒤 공백 주의) |
+| PowerShell에서 명령이 안 먹어요 | `start.bat`을 더블클릭하는 게 가장 쉬워요 |
+
+## 웹 화면
+
+서버가 켜지면 http://localhost:8000 에서 쓸 수 있어요.
 
 - **올리기**: 사진을 끌어다 놓거나(여러 장 가능) 화면 캡처를 Ctrl+V로 붙여 넣어요. 한 장씩 차례로 보내고, 무료 한도(429)에 걸리면 60초 기다렸다가 자동으로 다시 시도해요.
 - **문제**: 텍스트·태그·단원·유형·검수 상태로 검색하고, 수식은 KaTeX로 그려서 보여줘요. 지금 조건의 문제를 JSON으로 내보낼 수 있어요.
