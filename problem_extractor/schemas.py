@@ -12,6 +12,7 @@ from pydantic import BaseModel, Field
 
 ProblemType = Literal["multiple_choice", "short_answer", "essay", "true_false", "other"]
 Confidence = Literal["high", "medium", "low"]
+FigureKind = Literal["graph", "geometry", "table", "diagram", "picture", "other"]
 
 
 # ---------------------------------------------------------------------------
@@ -33,9 +34,29 @@ class Choice(BaseModel):
     text: str = Field(description="보기 내용. 수식은 $...$ LaTeX")
 
 
+class PointLabel(BaseModel):
+    label: str = Field(description="그림에 적힌 점 이름 그대로. 예: A, P, O")
+    coordinates: str | None = Field(
+        default=None, description="그림에 좌표가 인쇄돼 있을 때만 그대로. 예: '(2, 0)'. 없으면 null (추측 금지)"
+    )
+
+
 class Figure(BaseModel):
+    kind: FigureKind = Field(
+        default="other",
+        description="graph: 좌표평면 위 그래프, geometry: 도형, table: 표, diagram: 수직선·벤다이어그램·순서도 등, "
+        "picture: 삽화·사진, other: 그 밖",
+    )
     description: str = Field(description="그림/그래프/도형/표를 한 문장으로 설명")
     bbox: BBox
+    equations: list[str] = Field(
+        default_factory=list,
+        description="그림 안에 직접 적힌 식만 LaTeX로. 예: 그래프 옆의 'y=x^2-4'. 없으면 빈 배열 (발문의 식을 옮기지 말 것)",
+    )
+    points: list[PointLabel] = Field(default_factory=list, description="그림에 이름이 붙은 점들. 없으면 빈 배열")
+    table_markdown: str | None = Field(
+        default=None, description="kind가 table일 때 표 내용을 Markdown 표로. 칸 안의 수식은 $...$. 표가 아니면 null"
+    )
 
 
 class ExtractedProblem(BaseModel):
@@ -69,9 +90,33 @@ class PageExtraction(BaseModel):
 
 class FigureOut(BaseModel):
     id: int
+    problem_id: int
+    kind: FigureKind
     description: str
     bbox: BBox
-    url: str
+    equations: list[str]
+    points: list[PointLabel]
+    table_markdown: str | None
+    url: str = Field(description="잘라낸 그림 PNG. 영역을 바꾸면 ?v= 값이 바뀐다")
+
+
+class FigurePatch(BaseModel):
+    """그림 정보 수정. bbox를 보내면 원본 페이지에서 그 영역으로 다시 잘라낸다."""
+
+    kind: FigureKind | None = None
+    description: str | None = None
+    bbox: BBox | None = None
+    equations: list[str] | None = None
+    points: list[PointLabel] | None = None
+    table_markdown: str | None = None
+
+
+class FigureCreate(BaseModel):
+    """검수 중에 모델이 놓친 그림을 직접 추가."""
+
+    bbox: BBox
+    kind: FigureKind = "other"
+    description: str = ""
 
 
 class ProblemOut(BaseModel):

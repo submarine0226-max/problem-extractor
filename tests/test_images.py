@@ -30,3 +30,20 @@ def test_prepare_downscales_for_model_only():
     prepared = prepare_image(buf.getvalue(), max_side=1000)
     assert prepared.image.size == (3000, 1500)
     assert Image.open(io.BytesIO(prepared.model_bytes)).size == (1000, 500)
+
+
+def test_trim_margins_removes_blank_border_only():
+    from problem_extractor.images import trim_margins
+
+    img = Image.new("RGB", (400, 300), (235, 232, 225))  # 사진 속 종이처럼 약간 누런 배경
+    img.paste((20, 20, 20), (100, 100, 200, 150))
+    out = trim_margins(img)
+    pad = round(0.02 * 400)
+    assert out.size == (100 + 2 * pad, 50 + 2 * pad)
+
+    blank = Image.new("RGB", (200, 200), "white")
+    assert trim_margins(blank).size == (200, 200)  # 내용이 없으면 그대로
+
+    speck = Image.new("RGB", (200, 200), "white")
+    speck.putpixel((5, 5), (0, 0, 0))
+    assert trim_margins(speck).size == (200, 200)  # 얼룩 하나는 믿지 않는다

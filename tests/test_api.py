@@ -301,3 +301,98 @@ def test_default_models_match_extractor_modules():
     from problem_extractor.extractors import claude, gemini
 
     assert DEFAULT_MODELS == {"gemini": gemini.DEFAULT_MODEL, "claude": claude.DEFAULT_MODEL}
+
+
+def page_with_graph() -> bytes:
+    """흰 페이지 오른쪽에 검은 '그래프' 상자가 있는 이미지."""
+    img = Image.new("RGB", (1400, 1900), "white")
+    img.paste((0, 0, 0), (900, 800, 1200, 1100))
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    return buf.getvalue()
+
+
+def graph_page_extractor() -> FakeExtractor:
+    return FakeExtractor(PageExtraction(page_title=None, problems=[make_problem(
+        figures=[
+            Figure(
+                kind="graph",
+                description="y=x^2-4 그래프",
+                bbox=BBox(x0=0.6, y0=0.38, x1=0.9, y1=0.62),  # 상자보다 넉넉하게 잡힌 영역
+                equations=["y=x^2-4"],
+                points=[{"label": "A", "coordinates": "(-2, 0)"}, {"label": "B", "coordinates": None}],
+            ),
+            Figure(kind="table", description="함숫값 표", bbox=BBox(x0=0.05, y0=0.7, x1=0.4, y1=0.8),
+                   table_markdown="| x | 1 | 2 |\n|---|---|---|\n| y | 3 | 5 |"),
+        ],
+    )]))
+
+
+def test_figure_details_and_trimmed_crop(settings):
+    client = TestClient(create_app(settings, graph_page_extractor()))
+    body = upload(client, page_with_graph()).json()
+    graph, table = body["problems"][0]["figures"]
+    assert graph["kind"] == "graph"
+    assert graph["equations"] == ["y=x^2-4"]
+    assert graph["points"][0] == {"label": "A", "coordinates": "(-2, 0)"}
+    assert table["table_markdown"].startswith("| x |")
+
+    w, h = Image.open(io.BytesIO(client.get(graph["url"]).content)).size
+    # 상자(300x300) + 여백만 남고, 넉넉했던 bbox(약 420x456)보다 작아졌는지
+    assert 300 <= w < 340 and 300 <= h < 340
+
+    # 그림 속 식과 표 내용으로도 검색된다
+    assert client.get("/problems", params={"q": "x^2-4"}).json()["total"] == 1
+    assert client.get("/problems", params={"q": "함숫값"}).json()["total"] == 1
+
+
+def test_figure_edit_recrop_add_delete(settings):
+    client = TestClient(create_app(settings, graph_page_extractor()))
+    body = upload(client, page_with_graph()).json()
+    pid = body["problems"][0]["id"]
+    graph = body["problems"][0]["figures"][0]
+    old_file = len(list((settings.data_dir / "figures").iterdir()))
+
+    res = client.patch(f"/figures/{graph['id']}", json={
+        "description": "고친 설명", "equations": ["y=x^2-4", "y=0"],
+        "bbox": {"x0": 0.6, "y0": 0.4, "x1": 0.9, "y1": 0.6},
+    })
+    assert res.status_code == 200, res.text
+    fig = res.json()
+    assert fig["description"] == "고친 설명" and fig["equations"] == ["y=x^2-4", "y=0"]
+    assert fig["url"] != graph["url"]  # 다시 잘랐으니 주소(캐시 키)가 바뀐다
+    assert client.get(fig["url"]).status_code == 200
+    assert len(list((settings.data_dir / "figures").iterdir())) == old_file  # 옛 파일은 지워짐
+
+    assert client.patch(f"/figures/{graph['id']}", json={"bbox": {"x0": 0.5, "y0": 0.5, "x1": 0.5, "y1": 0.5}}).status_code == 422
+    assert client.patch(f"/figures/{graph['id']}", json={"kind": None}).status_code == 422
+    assert client.patch("/figures/9999", json={"description": "x"}).status_code == 404
+
+    added = client.post(f"/problems/{pid}/figures", json={"bbox": {"x0": 0.6, "y0": 0.4, "x1": 0.9, "y1": 0.6}, "kind": "geometry"})
+    assert added.status_code == 201, added.text
+    assert added.json()["kind"] == "geometry"
+    assert len(client.get(f"/problems/{pid}").json()["figures"]) == 3
+    assert client.post("/problems/9999/figures", json={"bbox": {"x0": 0, "y0": 0, "x1": 1, "y1": 1}}).status_code == 404
+
+    assert client.delete(f"/figures/{added.json()['id']}").status_code == 204
+    assert len(client.get(f"/problems/{pid}").json()["figures"]) == 2
+    assert client.delete(f"/figures/{added.json()['id']}").status_code == 404
+
+
+def test_old_database_gets_new_figure_columns(tmp_path):
+    import sqlite3
+
+    from problem_extractor.db import Database
+
+    path = tmp_path / "old.db"
+    conn = sqlite3.connect(path)
+    conn.executescript("""
+        CREATE TABLE figures (id INTEGER PRIMARY KEY, problem_id INTEGER NOT NULL, position INTEGER NOT NULL,
+                              description TEXT NOT NULL, bbox_json TEXT NOT NULL, path TEXT NOT NULL);
+        INSERT INTO figures VALUES (1, 1, 0, '옛 그림', '{"x0":0,"y0":0,"x1":1,"y1":1}', 'figures/a.png');
+    """)
+    conn.close()
+    db = Database(path)
+    row = db.get_figure(1)
+    assert row["kind"] == "other" and row["equations_json"] == "[]" and row["table_markdown"] is None
+    Database(path)  # 두 번 열어도 문제없음

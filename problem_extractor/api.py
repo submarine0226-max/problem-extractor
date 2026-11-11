@@ -25,7 +25,17 @@ from .extractors import (
     has_credentials,
 )
 from .images import InvalidImageError
-from .schemas import ExtractResponse, ProblemList, ProblemOut, ProblemPatch, ProblemType, SourceOut
+from .schemas import (
+    ExtractResponse,
+    FigureCreate,
+    FigureOut,
+    FigurePatch,
+    ProblemList,
+    ProblemOut,
+    ProblemPatch,
+    ProblemType,
+    SourceOut,
+)
 from .service import ProblemService
 
 log = logging.getLogger("problem_extractor")
@@ -189,6 +199,32 @@ def create_app(settings: Settings | None = None, extractor: Extractor | None = N
         if path is None:
             raise HTTPException(404, "그림을 찾을 수 없어요.")
         return FileResponse(path, media_type="image/png")
+
+    @app.patch("/figures/{figure_id}", response_model=FigureOut, summary="그림 정보 수정 · bbox를 보내면 다시 잘라내기")
+    def patch_figure(svc: Svc, figure_id: int, patch: FigurePatch) -> FigureOut:
+        try:
+            out = svc.update_figure(figure_id, patch)
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from exc
+        if out is None:
+            raise HTTPException(404, "그림을 찾을 수 없어요.")
+        return out
+
+    @app.delete("/figures/{figure_id}", status_code=204, summary="그림 삭제")
+    def delete_figure(svc: Svc, figure_id: int) -> Response:
+        if not svc.delete_figure(figure_id):
+            raise HTTPException(404, "그림을 찾을 수 없어요.")
+        return Response(status_code=204)
+
+    @app.post("/problems/{problem_id}/figures", response_model=FigureOut, status_code=201, summary="놓친 그림 직접 추가")
+    def add_figure(svc: Svc, problem_id: int, body: FigureCreate) -> FigureOut:
+        try:
+            out = svc.add_figure(problem_id, body)
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from exc
+        if out is None:
+            raise HTTPException(404, "문제를 찾을 수 없어요.")
+        return out
 
     @app.get("/sources/{source_id}/image", response_class=FileResponse, summary="원본 페이지 PNG")
     def get_source_image(svc: Svc, source_id: int) -> FileResponse:

@@ -88,6 +88,36 @@ function toast(msg, ms = 2500) {
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+/** 단순한 Markdown 표(| a | b |)를 HTML 표로. 표 모양이 아니면 null. */
+function markdownTable(md) {
+  const rows = md.trim().split(/\r?\n/).map((l) => l.trim()).filter((l) => l.startsWith("|"));
+  if (rows.length < 2) return null;
+  const cells = (line) => line.replace(/^\|/, "").replace(/\|$/, "").split("|").map((c) => c.trim());
+  const isRule = (line) => /^\|?\s*:?-{2,}/.test(line);
+  const hasHead = isRule(rows[1]);
+  const body = rows.filter((r) => !isRule(r));
+  const table = h("table", { class: "md-table" });
+  body.forEach((r, i) => {
+    const tag = hasHead && i === 0 ? "th" : "td";
+    table.append(h("tr", {}, cells(r).map((c) => math(h(tag), c))));
+  });
+  return table;
+}
+
+const KIND_LABEL = { graph: "그래프", geometry: "도형", table: "표", diagram: "도식", picture: "그림", other: "기타" };
+
+/** "A (-2, 0), B" <-> [{label, coordinates}] */
+function formatPoints(points) {
+  return points.map((p) => `${p.label}${p.coordinates ? ` ${p.coordinates}` : ""}`).join(", ");
+}
+function parsePoints(text) {
+  const out = [];
+  for (const m of text.matchAll(/([^\s,()]+)\s*(\([^)]*\))?/g)) {
+    out.push({ label: m[1], coordinates: m[2] ?? null });
+  }
+  return out;
+}
+
 /** 카드와 미리보기에 같이 쓰는 문제 본문 */
 function problemBody(p) {
   const box = h("div", { class: "problem-body" });
@@ -96,6 +126,10 @@ function problemBody(p) {
   if (p.choices?.length) {
     box.append(h("ol", { class: "choices" },
       p.choices.map((c) => math(h("li"), `${c.label} ${c.text}`))));
+  }
+  for (const f of p.figures ?? []) {
+    const table = f.table_markdown && markdownTable(f.table_markdown);
+    if (table) box.append(table);
   }
   if (p.answer) box.append(math(h("div", { class: "answer" }), `정답: ${p.answer}`));
   if (p.notes) box.append(h("div", { class: "note" }, `⚠ ${p.notes}`));
@@ -361,7 +395,12 @@ function problemCard(p, index) {
     ),
     problemBody(p),
     p.figures.length > 0 && h("div", { class: "thumbs" },
-      p.figures.map((f) => h("img", { src: url(f.url), alt: f.description, title: f.description, loading: "lazy" }))),
+      p.figures.map((f) => h("figure", {},
+        h("img", { src: url(f.url), alt: f.description, title: f.description, loading: "lazy" }),
+        h("figcaption", { class: "small muted" },
+          KIND_LABEL[f.kind] ?? "",
+          f.equations.length > 0 && math(h("span"), ` · ${f.equations.map((e) => `$${e}$`).join(", ")}`),
+          f.points.length > 0 && ` · 점 ${f.points.map((pt) => pt.label).join(", ")}`)))),
   );
   return card;
 }
@@ -420,6 +459,153 @@ function choiceRow(c = { label: "", text: "" }) {
   return row;
 }
 
+function figureRow(fig) {
+  const kind = h("select", { "data-fk": "kind", "aria-label": "종류" },
+    Object.entries(KIND_LABEL).map(([v, label]) => h("option", { value: v, selected: v === fig.kind }, label)));
+  const table = h("textarea", { "data-fk": "table_markdown", rows: "3", placeholder: "| x | 1 | 2 |\n|---|---|---|\n| y | 3 | 5 |" });
+  table.value = fig.table_markdown ?? "";
+  const tableLabel = h("label", {}, "표 내용 (Markdown)", table);
+  const syncKind = () => { tableLabel.hidden = kind.value !== "table" && !table.value.trim(); };
+  kind.addEventListener("change", syncKind);
+  syncKind();
+  const equations = h("textarea", { "data-fk": "equations", rows: "2", placeholder: "y=x^2-4" });
+  equations.value = fig.equations.join("\n");
+  return h("div", { class: "figure-row", "data-id": fig.id },
+    h("div", { class: "figure-thumb" },
+      h("img", { src: url(fig.url), alt: fig.description }),
+      h("div", { class: "row gap" },
+        h("button", { type: "button", class: "ghost small", onclick: () => openCropper(fig) }, "영역 다시 지정"),
+        h("button", { type: "button", class: "ghost small danger", onclick: () => removeFigure(fig) }, "삭제"))),
+    h("div", { class: "figure-fields" },
+      h("div", { class: "grid-kind" },
+        h("label", {}, "종류", kind),
+        h("label", {}, "설명", h("input", { "data-fk": "description", value: fig.description }))),
+      h("label", {}, "그림 속 식 (한 줄에 하나, $ 없이 LaTeX)", equations),
+      h("label", {}, "이름 붙은 점", h("input", { "data-fk": "points", value: formatPoints(fig.points), placeholder: "A (-2, 0), B, O" })),
+      tableLabel),
+  );
+}
+
+function readFigure(row) {
+  const v = (k) => $(`[data-fk=${k}]`, row).value;
+  return {
+    kind: v("kind"),
+    description: v("description").trim(),
+    equations: v("equations").split("\n").map((e) => e.trim().replace(/^\$+|\$+$/g, "")).filter(Boolean),
+    points: parsePoints(v("points")),
+    table_markdown: v("table_markdown").trim() || null,
+  };
+}
+
+function renderFigureRows(p) {
+  $("#figure-rows").replaceChildren(...(p.figures.length
+    ? p.figures.map(figureRow)
+    : [h("div", { class: "muted small" }, "그림이 없어요. 모델이 놓쳤다면 '+ 그림 추가'로 원본에서 골라 주세요.")]));
+}
+
+/** 서버에서 문제를 다시 받아 목록·카드·편집기 그림 칸을 맞춘다 (그림을 다시 자르거나 추가·삭제한 뒤). */
+async function reloadProblem() {
+  const fresh = await api(`/problems/${editor.problem.id}`);
+  listState.items[editor.index] = fresh;
+  editor.problem = fresh;
+  renderFigureRows(fresh);
+  const card = $("#problem-list").children[editor.index];
+  if (card) card.replaceWith(problemCard(fresh, editor.index));
+  const wasDirty = editor.dirty;
+  onEdit();
+  editor.dirty = wasDirty;
+  if (!wasDirty) $("#edit-status").textContent = "";
+}
+
+async function removeFigure(fig) {
+  if (!confirm("이 그림을 지울까요? 되돌릴 수 없어요.")) return;
+  try {
+    await api(`/figures/${fig.id}`, { method: "DELETE" });
+    await reloadProblem();
+    toast("그림을 지웠어요");
+  } catch (err) { toast(`삭제 실패: ${err.message}`); }
+}
+
+// ---------------------------------------------------------------- 그림 영역 고르기
+
+const crop = { target: null, rect: null, start: null };
+
+function openCropper(fig) {
+  crop.target = fig;  // null이면 새 그림 추가
+  const p = editor.problem;
+  crop.rect = fig ? { ...fig.bbox } : null;
+  $("#crop-title").textContent = fig ? "그림 영역 다시 지정" : "새 그림 영역 고르기";
+  const img = $("#crop-img");
+  img.src = url(`/sources/${p.source_id}/image`);
+  drawCropRect();
+  $("#cropper").showModal();
+  // 이 문제 근처로 스크롤
+  img.decode().catch(() => {}).then(() => {
+    const y = (fig ? fig.bbox.y0 : (p.bbox?.y0 ?? 0)) * img.clientHeight;
+    $(".crop-scroll").scrollTop = Math.max(0, y - 80);
+  });
+}
+
+function drawCropRect() {
+  const el = $("#crop-rect");
+  const r = crop.rect;
+  el.hidden = !r;
+  $("#crop-apply").disabled = !r || r.x1 - r.x0 < 0.01 || r.y1 - r.y0 < 0.01;
+  if (!r) return;
+  Object.assign(el.style, {
+    left: `${r.x0 * 100}%`, top: `${r.y0 * 100}%`,
+    width: `${(r.x1 - r.x0) * 100}%`, height: `${(r.y1 - r.y0) * 100}%`,
+  });
+}
+
+function setupCropper() {
+  const stage = $("#crop-stage");
+  const pos = (e) => {
+    const b = $("#crop-img").getBoundingClientRect();
+    return {
+      x: Math.min(1, Math.max(0, (e.clientX - b.left) / b.width)),
+      y: Math.min(1, Math.max(0, (e.clientY - b.top) / b.height)),
+    };
+  };
+  stage.addEventListener("pointerdown", (e) => {
+    e.preventDefault();
+    stage.setPointerCapture(e.pointerId);
+    crop.start = pos(e);
+    crop.rect = { x0: crop.start.x, y0: crop.start.y, x1: crop.start.x, y1: crop.start.y };
+    drawCropRect();
+  });
+  stage.addEventListener("pointermove", (e) => {
+    if (!crop.start) return;
+    const p = pos(e);
+    crop.rect = {
+      x0: Math.min(crop.start.x, p.x), y0: Math.min(crop.start.y, p.y),
+      x1: Math.max(crop.start.x, p.x), y1: Math.max(crop.start.y, p.y),
+    };
+    drawCropRect();
+  });
+  const end = () => { crop.start = null; };
+  stage.addEventListener("pointerup", end);
+  stage.addEventListener("pointercancel", end);
+  $("#crop-cancel").addEventListener("click", () => $("#cropper").close());
+  $("#crop-apply").addEventListener("click", async () => {
+    const bbox = crop.rect;
+    try {
+      if (crop.target) {
+        await api(`/figures/${crop.target.id}`, {
+          method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ bbox }),
+        });
+      } else {
+        await api(`/problems/${editor.problem.id}/figures`, {
+          method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ bbox }),
+        });
+      }
+      $("#cropper").close();
+      await reloadProblem();
+      toast(crop.target ? "그림을 다시 잘랐어요" : "그림을 추가했어요");
+    } catch (err) { toast(`실패: ${err.message}`); }
+  });
+}
+
 function readForm() {
   const f = $("#edit-form").elements;
   const orNull = (v) => (v.trim() === "" ? null : v.trim());
@@ -448,7 +634,8 @@ function onEdit() {
   clearTimeout(previewTimer);
   previewTimer = setTimeout(() => {
     const v = readForm();
-    const box = problemBody({ ...v, notes: null });
+    const figures = [...document.querySelectorAll("#figure-rows .figure-row")].map(readFigure);
+    const box = problemBody({ ...v, figures, notes: null });
     if (v.solution) box.append(math(h("div", { class: "muted" }), `해설: ${v.solution}`));
     $("#preview").replaceChildren(box);
   }, 150);
@@ -477,8 +664,7 @@ function openEditor(index) {
     `${listState.offset + index + 1} / ${listState.total} · 자신감 ${CONF_LABEL[p.confidence]}${p.reviewed ? " · 검수 완료" : ""}`;
   $("#edit-image").src = `${url(p.image_url)}?v=${encodeURIComponent(p.updated_at)}`;
   $("#open-page").href = url(`/sources/${p.source_id}/image`);
-  $("#edit-figures").replaceChildren(...p.figures.map((fig) =>
-    h("figure", {}, h("img", { src: url(fig.url), alt: fig.description }), h("figcaption", {}, fig.description))));
+  renderFigureRows(p);
 
   onEdit();
   editor.dirty = false;
@@ -500,6 +686,22 @@ async function save(markReviewed) {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
     });
+    // 그림 칸에서 바뀐 것만 따로 저장
+    for (const row of document.querySelectorAll("#figure-rows .figure-row")) {
+      const id = Number(row.dataset.id);
+      const before = editor.problem.figures.find((f) => f.id === id);
+      if (!before) continue;
+      const after = readFigure(row);
+      const changed = Object.fromEntries(Object.entries(after)
+        .filter(([k, val]) => JSON.stringify(val) !== JSON.stringify(before[k])));
+      if (Object.keys(changed).length) {
+        const fig = await api(`/figures/${id}`, {
+          method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(changed),
+        });
+        const i = updated.figures.findIndex((f) => f.id === id);
+        if (i >= 0) updated.figures[i] = fig;
+      }
+    }
     listState.items[editor.index] = updated;
     editor.problem = updated;
     editor.dirty = false;
@@ -539,6 +741,8 @@ function setupEditor() {
   const form = $("#edit-form");
   form.addEventListener("input", onEdit);
   form.addEventListener("submit", (e) => e.preventDefault());
+  $("#add-figure").addEventListener("click", () => openCropper(null));
+  setupCropper();
   $("#add-choice").addEventListener("click", () => {
     const n = $("#choice-rows").children.length;
     const row = choiceRow({ label: "①②③④⑤⑥⑦⑧⑨⑩"[n] ?? "", text: "" });
@@ -550,6 +754,7 @@ function setupEditor() {
   dlg.addEventListener("click", (e) => { if (e.target === dlg) closeEditor(); });
   $("#save").addEventListener("click", () => save(false));
   $("#save-next").addEventListener("click", saveAndNext);
+  $("#cropper").addEventListener("keydown", (e) => e.stopPropagation());
   dlg.addEventListener("keydown", (e) => {
     if ((e.ctrlKey || e.metaKey) && e.key === "Enter") { e.preventDefault(); saveAndNext(); }
     if ((e.ctrlKey || e.metaKey) && e.key === "s") { e.preventDefault(); save(false); }

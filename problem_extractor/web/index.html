@@ -97,7 +97,6 @@
             <a id="open-page" target="_blank" rel="noopener">페이지 전체 보기</a>
           </div>
           <img id="edit-image" alt="원본에서 잘라낸 문제 영역">
-          <div id="edit-figures" class="figures"></div>
         </div>
         <div class="editor-fields">
           <div class="grid3">
@@ -128,6 +127,10 @@
             <label>메모<input name="notes"></label>
           </div>
           <label>해설<textarea name="solution" rows="2"></textarea></label>
+          <div class="figures-block">
+            <div class="row gap"><span>그림·그래프·표</span><span class="spacer"></span><button id="add-figure" type="button" class="ghost small">+ 그림 추가</button></div>
+            <div id="figure-rows"></div>
+          </div>
           <div class="preview-label muted small">미리보기</div>
           <div id="preview" class="preview problem-body"></div>
         </div>
@@ -140,6 +143,23 @@
         <button id="save-next" type="button">검수 완료 · 다음 <kbd>Ctrl+Enter</kbd></button>
       </footer>
     </form>
+  </dialog>
+
+  <!-- 그림 영역 고르기 -->
+  <dialog id="cropper" class="cropper">
+    <div class="editor-head">
+      <strong id="crop-title">그림 영역 고르기</strong>
+      <span class="muted small">원본 위에서 드래그해서 그림만 감싸 주세요. 바깥 여백은 자동으로 정리돼요.</span>
+      <span class="spacer"></span>
+      <button id="crop-cancel" type="button" class="ghost">취소</button>
+      <button id="crop-apply" type="button" disabled>적용</button>
+    </div>
+    <div class="crop-scroll">
+      <div id="crop-stage" class="crop-stage">
+        <img id="crop-img" alt="원본 페이지" draggable="false">
+        <div id="crop-rect" class="crop-rect" hidden></div>
+      </div>
+    </div>
   </dialog>
 
   <div id="toast" class="toast" role="status" hidden></div>

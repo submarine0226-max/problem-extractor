@@ -5,7 +5,7 @@ from __future__ import annotations
 import io
 from dataclasses import dataclass
 
-from PIL import Image, ImageOps, UnidentifiedImageError
+from PIL import Image, ImageChops, ImageOps, ImageStat, UnidentifiedImageError
 
 from .schemas import BBox
 
@@ -67,6 +67,43 @@ def crop_bbox(img: Image.Image, bbox: BBox, pad: float = 0.015) -> Image.Image |
     if box[2] - box[0] < 4 or box[3] - box[1] < 4:
         return None
     return img.crop(box)
+
+
+def trim_margins(img: Image.Image, tolerance: int = 40, margin: float = 0.02) -> Image.Image:
+    """잘라낸 그림 바깥의 빈 여백(종이 색)을 깎는다. 내용은 절대 자르지 않고, 줄이기만 한다.
+
+    - 배경색은 가장자리 픽셀의 중간값으로 정한다 (사진이라 종이가 완전한 흰색이 아니어도 됨).
+    - 배경과 tolerance 넘게 다른 픽셀을 '내용'으로 보고, 그 범위에 margin만큼 여유를 남긴다.
+    - 내용이 거의 없으면(얼룩 하나 등) 판단을 믿을 수 없으니 원본을 그대로 돌려준다.
+    """
+    w, h = img.size
+    if w < 8 or h < 8:
+        return img
+    gray = img.convert("L")
+    edge = Image.new("L", (w * 2 + h * 2, 1))
+    edge.paste(gray.crop((0, 0, w, 1)), (0, 0))
+    edge.paste(gray.crop((0, h - 1, w, h)), (w, 0))
+    edge.paste(gray.crop((0, 0, 1, h)).transpose(Image.Transpose.ROTATE_90), (w * 2, 0))
+    edge.paste(gray.crop((w - 1, 0, w, h)).transpose(Image.Transpose.ROTATE_90), (w * 2 + h, 0))
+    background = int(ImageStat.Stat(edge).median[0])
+
+    diff = ImageChops.difference(gray, Image.new("L", (w, h), background))
+    mask = diff.point(lambda v: 255 if v > tolerance else 0)
+    box = mask.getbbox()
+    if box is None:
+        return img
+    bx0, by0, bx1, by1 = box
+    if (bx1 - bx0) * (by1 - by0) < 0.01 * w * h:
+        return img
+    pad = max(4, round(margin * max(w, h)))
+    box = (max(0, bx0 - pad), max(0, by0 - pad), min(w, bx1 + pad), min(h, by1 + pad))
+    return img if box == (0, 0, w, h) else img.crop(box)
+
+
+def crop_figure(img: Image.Image, bbox: BBox, pad: float = 0.015) -> Image.Image | None:
+    """그림용 크롭: 여유를 두고 자른 뒤 남는 여백을 깎는다."""
+    crop = crop_bbox(img, bbox, pad=pad)
+    return None if crop is None else trim_margins(crop)
 
 
 def to_png_bytes(img: Image.Image) -> bytes:

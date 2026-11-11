@@ -50,7 +50,11 @@ CREATE TABLE IF NOT EXISTS figures (
     position     INTEGER NOT NULL,
     description  TEXT NOT NULL,
     bbox_json    TEXT NOT NULL,
-    path         TEXT NOT NULL
+    path         TEXT NOT NULL,
+    kind            TEXT NOT NULL DEFAULT 'other',
+    equations_json  TEXT NOT NULL DEFAULT '[]',
+    points_json     TEXT NOT NULL DEFAULT '[]',
+    table_markdown  TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_figures_problem ON figures(problem_id, position);
 """
@@ -71,6 +75,28 @@ PATCHABLE_COLUMNS = {
 }
 
 
+# 예전 버전으로 만든 DB에 없는 열 (열 이름, 정의). 시작할 때 없으면 추가한다.
+MIGRATIONS = {
+    "figures": [
+        ("kind", "TEXT NOT NULL DEFAULT 'other'"),
+        ("equations_json", "TEXT NOT NULL DEFAULT '[]'"),
+        ("points_json", "TEXT NOT NULL DEFAULT '[]'"),
+        ("table_markdown", "TEXT"),
+    ],
+}
+
+FIGURE_PATCHABLE = {
+    "kind": "kind",
+    "description": "description",
+    "bbox": "bbox_json",
+    "equations": "equations_json",
+    "points": "points_json",
+    "table_markdown": "table_markdown",
+    "path": "path",
+}
+FIGURE_JSON = {"bbox", "equations", "points"}
+
+
 def now_iso() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
@@ -81,6 +107,11 @@ class Database:
         path.parent.mkdir(parents=True, exist_ok=True)
         with self.connect() as conn:
             conn.executescript(SCHEMA)
+            for table, columns in MIGRATIONS.items():
+                have = {r["name"] for r in conn.execute(f"PRAGMA table_info({table})")}
+                for name, ddl in columns:
+                    if name not in have:
+                        conn.execute(f"ALTER TABLE {table} ADD COLUMN {name} {ddl}")
 
     @contextmanager
     def connect(self) -> Iterator[sqlite3.Connection]:
@@ -191,11 +222,7 @@ class Database:
                 for fpos, fig in enumerate(p["figures"]):
                     if not fig.get("path"):
                         continue
-                    conn.execute(
-                        "INSERT INTO figures (problem_id, position, description, bbox_json, path)"
-                        " VALUES (?, ?, ?, ?, ?)",
-                        (problem_id, fpos, fig["description"], json.dumps(fig["bbox"]), fig["path"]),
-                    )
+                    self._insert_figure(conn, problem_id, fpos, fig)
             return source_id
 
     # --- problems ----------------------------------------------------------
@@ -222,6 +249,59 @@ class Database:
         with self.connect() as conn:
             return conn.execute("SELECT * FROM figures WHERE id = ?", (figure_id,)).fetchone()
 
+    @staticmethod
+    def _insert_figure(conn: sqlite3.Connection, problem_id: int, position: int, fig: dict[str, Any]) -> int:
+        cur = conn.execute(
+            "INSERT INTO figures (problem_id, position, description, bbox_json, path,"
+            " kind, equations_json, points_json, table_markdown) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                problem_id,
+                position,
+                fig.get("description") or "",
+                json.dumps(fig["bbox"]),
+                fig["path"],
+                fig.get("kind") or "other",
+                json.dumps(fig.get("equations") or [], ensure_ascii=False),
+                json.dumps(fig.get("points") or [], ensure_ascii=False),
+                fig.get("table_markdown"),
+            ),
+        )
+        return cur.lastrowid
+
+    def add_figure(self, problem_id: int, fig: dict[str, Any]) -> int:
+        with self.connect() as conn:
+            pos = conn.execute(
+                "SELECT COALESCE(MAX(position) + 1, 0) FROM figures WHERE problem_id = ?", (problem_id,)
+            ).fetchone()[0]
+            fid = self._insert_figure(conn, problem_id, pos, fig)
+            conn.execute("UPDATE problems SET updated_at = ? WHERE id = ?", (now_iso(), problem_id))
+            return fid
+
+    def update_figure(self, figure_id: int, changes: dict[str, Any]) -> bool:
+        sets, args = [], []
+        for key, value in changes.items():
+            sets.append(f"{FIGURE_PATCHABLE[key]} = ?")
+            args.append(json.dumps(value, ensure_ascii=False) if key in FIGURE_JSON else value)
+        if not sets:
+            return self.get_figure(figure_id) is not None
+        with self.connect() as conn:
+            cur = conn.execute(f"UPDATE figures SET {', '.join(sets)} WHERE id = ?", [*args, figure_id])
+            conn.execute(
+                "UPDATE problems SET updated_at = ? WHERE id = (SELECT problem_id FROM figures WHERE id = ?)",
+                (now_iso(), figure_id),
+            )
+            return cur.rowcount > 0
+
+    def delete_figure(self, figure_id: int) -> str | None:
+        """지운 그림의 파일 경로. 없으면 None."""
+        with self.connect() as conn:
+            row = conn.execute("SELECT path, problem_id FROM figures WHERE id = ?", (figure_id,)).fetchone()
+            if row is None:
+                return None
+            conn.execute("DELETE FROM figures WHERE id = ?", (figure_id,))
+            conn.execute("UPDATE problems SET updated_at = ? WHERE id = ?", (now_iso(), row["problem_id"]))
+            return row["path"]
+
     def search_problems(
         self,
         *,
@@ -240,9 +320,14 @@ class Database:
             where.append("source_id = ?")
             args.append(source_id)
         if q:
-            where.append("(stem LIKE ? OR shared_context LIKE ? OR choices_json LIKE ?)")
+            # 그림 설명·그림 속 식·표 내용도 함께 찾는다 (예: 'x^2-4' 로 그래프가 있는 문제 찾기)
+            where.append(
+                "(stem LIKE ? OR shared_context LIKE ? OR choices_json LIKE ? OR EXISTS ("
+                "SELECT 1 FROM figures f WHERE f.problem_id = problems.id AND"
+                " (f.description LIKE ? OR f.equations_json LIKE ? OR f.table_markdown LIKE ?)))"
+            )
             like = f"%{q}%"
-            args += [like, like, like]
+            args += [like] * 6
         if tag:
             where.append("EXISTS (SELECT 1 FROM json_each(problems.tags_json) WHERE value = ?)")
             args.append(tag)
